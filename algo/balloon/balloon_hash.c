@@ -2,8 +2,7 @@
 #include "algo-gate-api.h"
 #include "balloon.h"
 
-int scanhash_balloon(struct work* work, uint32_t max_nonce,
-                     uint64_t *hashes_done, struct thr_info *mythr)
+int scanhash_balloon(struct work* work, uint32_t max_nonce,uint64_t *hashes_done, struct thr_info *mythr)
 {
         uint32_t *pdata = work->data;
         uint32_t *ptarget = work->target;
