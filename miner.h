@@ -302,6 +302,7 @@ void   applog2(int prio, const char *fmt, ...);
 void   restart_threads(void);
 extern json_t *json_rpc_call( CURL *curl, const char *url, const char *userpass,
                 	const char *rpc_req, int *curl_err, int flags );
+void memrev(unsigned char *p, size_t len); // Basic Segwit support
 extern void cbin2hex(char *out, const char *in, size_t len);
 void   bin2hex( char *s, const unsigned char *p, size_t len );
 char  *abin2hex( const unsigned char *p, size_t len );

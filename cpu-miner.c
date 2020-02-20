@@ -1,6 +1,6 @@
 /*
  * Copyright 2010 Jeff Garzik
- * Copyright 2012-2014 pooler
+ * Copyright 2012-2017 pooler
  * Copyright 2014 Lucas Jones
  * Copyright 2014 Tanguy Pruvot
  * Copyright 2016 Jay D Dee
@@ -496,10 +496,6 @@ static bool get_mininginfo(CURL *curl, struct work *work)
 	return true;
 }
 
-// hodl needs 4 but leave it at 3 until gbt better understood
-//#define BLOCK_VERSION_CURRENT 3
-#define BLOCK_VERSION_CURRENT 4
-
 static bool gbt_work_decode( const json_t *val, struct work *work )
 {
    int i, n;
@@ -513,10 +509,23 @@ static bool gbt_work_decode( const json_t *val, struct work *work )
    uchar(*merkle_tree)[32] = NULL;
    bool coinbase_append = false;
    bool submit_coinbase = false;
-   bool version_force = false;
-   bool version_reduce = false;
+   bool segwit = false; // Basic Segwit support
    json_t *tmp, *txa;
    bool rc = false;
+
+// BEGIN - Basic Segwit support
+	tmp = json_object_get(val, "rules");
+	if (tmp && json_is_array(tmp)) {
+		n = json_array_size(tmp);
+		for (i = 0; i < n; i++) {
+			const char *s = json_string_value(json_array_get(tmp, i));
+			if (!s)
+				continue;
+			if (!strcmp(s, "segwit") || !strcmp(s, "!segwit"))
+				segwit = true;
+		}
+	}
+// END - Basic Segwit support
 
    tmp = json_object_get( val, "mutable" );
    if ( tmp && json_is_array( tmp ) )
@@ -529,8 +538,6 @@ static bool gbt_work_decode( const json_t *val, struct work *work )
             continue;
          if      ( !strcmp( s, "coinbase/append" ) ) coinbase_append = true;
          else if ( !strcmp( s, "submit/coinbase" ) ) submit_coinbase = true;
-         else if ( !strcmp( s, "version/force" ) )   version_force   = true;
-         else if ( !strcmp( s, "version/reduce" ) )  version_reduce  = true;
       }
    }
 
@@ -550,24 +557,6 @@ static bool gbt_work_decode( const json_t *val, struct work *work )
       goto out;
    }
    version = (uint32_t) json_integer_value( tmp );
-   if ( (version & 0xffU) > BLOCK_VERSION_CURRENT )
-   {
-      if ( version_reduce )
-      {
-         version = ( version & ~0xffU ) | BLOCK_VERSION_CURRENT;
-      }
-      else if ( have_gbt && allow_getwork && !version_force )
-      {
-         applog( LOG_DEBUG, "Switching to getwork, gbt version %d", version );
-         have_gbt = false;
-         goto out;
-      }
-      else if ( !version_force )
-      {
-         applog(LOG_ERR, "Unrecognized block version: %u", version);
-         goto out;
-      }
-   }
 
    if ( unlikely( !jobj_binary(val, "previousblockhash", prevhash,
         sizeof(prevhash)) ) )
@@ -652,14 +641,20 @@ static bool gbt_work_decode( const json_t *val, struct work *work )
       memset( cbtx+5, 0x00, 32 ); /* prev txout hash */
       le32enc( (uint32_t *)(cbtx+37), 0xffffffff ); /* prev txout index */
       cbtx_size = 43;
+      
+      // BEGIN - Basic Segwit support
       /* BIP 34: height in coinbase */
-      for ( n = work->height; n; n >>= 8 )
+      for ( n = work->height; n; n >>= 8 ) {
          cbtx[cbtx_size++] = n & 0xff;
       /* If the last byte pushed is >= 0x80, then we need to add
          another zero byte to signal that the block height is a
          positive number.  */
-      if (cbtx[cbtx_size - 1] & 0x80)
+         if (n < 0x100 && n >= 0x80) {
          cbtx[cbtx_size++] = 0;
+         }
+      }
+      // END - Basic Segwit support
+
       cbtx[42] = cbtx_size - 43;
       cbtx[41] = cbtx_size - 42; /* scriptsig length */
       le32enc( (uint32_t *)( cbtx+cbtx_size ), 0xffffffff ); /* sequence */
@@ -1471,13 +1466,14 @@ const char *getwork_req =
 	"{\"method\": \"getwork\", \"params\": [], \"id\":0}\r\n";
 
 #define GBT_CAPABILITIES "[\"coinbasetxn\", \"coinbasevalue\", \"longpoll\", \"workid\"]"
+#define GBT_RULES "[\"segwit\"]"
 
 static const char *gbt_req =
 	"{\"method\": \"getblocktemplate\", \"params\": [{\"capabilities\": "
-	GBT_CAPABILITIES "}], \"id\":0}\r\n";
+	GBT_CAPABILITIES ", \"rules\": " GBT_RULES "}], \"id\":0}\r\n";
 const char *gbt_lp_req =
 	"{\"method\": \"getblocktemplate\", \"params\": [{\"capabilities\": "
-	GBT_CAPABILITIES ", \"longpollid\": \"%s\"}], \"id\":0}\r\n";
+	GBT_CAPABILITIES ", \"rules\": " GBT_RULES ", \"longpollid\": \"%s\"}], \"id\":0}\r\n";
 
 static bool get_upstream_work( CURL *curl, struct work *work )
 {
